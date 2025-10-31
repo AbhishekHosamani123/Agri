@@ -1,9 +1,13 @@
-import os
-import requests
-import pickle
+"""
+Flask API Server for Intelligent Q&A System
+Provides REST API endpoint for answering questions
+"""
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sys
+import os
+import pickle
 
 # Add parent directory to path to import qa_system
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,21 +31,6 @@ except Exception as e:
     print(f"⚠️ Warning: Could not initialize Gemini: {e}")
     GEMINI_AVAILABLE = False
 
-# Ensure vector_database.pkl exists by downloading from Google Drive
-VECTOR_DB_FILE = "backend/vector_database.pkl"
-GOOGLE_DRIVE_FILE_ID = "1t5ZyZ9MFjSVOLZpZR-ZqvPzBBFyt6617"
-
-if not os.path.exists(VECTOR_DB_FILE):
-    print("Downloading vector_database.pkl from Google Drive...")
-    url = f"https://drive.google.com/uc?export=download&id={GOOGLE_DRIVE_FILE_ID}"
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    os.makedirs(os.path.dirname(VECTOR_DB_FILE), exist_ok=True)
-    with open(VECTOR_DB_FILE, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    print("Download complete.")
-
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
@@ -64,6 +53,7 @@ def init_qa_system():
 
 @app.route('/')
 def home():
+    """Home endpoint"""
     return jsonify({
         'message': 'Intelligent Q&A API Server',
         'status': 'running',
@@ -76,6 +66,7 @@ def home():
 
 @app.route('/health', methods=['GET'])
 def health():
+    """Health check endpoint"""
     try:
         qa = init_qa_system()
         return jsonify({
@@ -91,19 +82,32 @@ def health():
 
 @app.route('/query', methods=['POST'])
 def query():
+    """Handle Q&A queries"""
     try:
         qa = init_qa_system()
+        
         data = request.get_json()
+        
         if not data or 'question' not in data:
-            return jsonify({'error': 'Missing question parameter'}), 400
+            return jsonify({
+                'error': 'Missing question parameter'
+            }), 400
         
         question = data['question']
-        top_k = data.get('top_k', 10)
-        use_gemini = data.get('use_gemini', True)
-
+        top_k = data.get('top_k', 10)  # Increased default to get more results
+        use_gemini = data.get('use_gemini', True)  # Gemini enabled by default
+        
+        print(f"\n🔍 Received question: {question}")
+        
+        # Get answer from Q&A system
         result = qa.answer_question(question, top_k=top_k)
+        print(f"✅ Q&A system returned answer with {result.get('search_results_count', 0)} results")
+        
+        # Enhance with Gemini if available and requested (for both dataset questions AND general questions)
         if GEMINI_AVAILABLE and use_gemini:
             try:
+                print("🤖 Attempting to enhance with Gemini...")
+                # Always try Gemini enhancement - it can handle both data-specific and general questions
                 enhanced_result = generate_smart_response(question, result)
                 response = {
                     'question': question,
@@ -114,7 +118,13 @@ def query():
                     'ai_enhanced': enhanced_result.get('ai_enhanced', False),
                     'general_guidance': enhanced_result.get('general_guidance', False)
                 }
-            except Exception:
+                if enhanced_result.get('general_guidance', False):
+                    print("✅ Response provided as general guidance (no dataset match)")
+                else:
+                    print("✅ Response enhanced with Gemini using dataset")
+            except Exception as e:
+                print(f"⚠️ Gemini enhancement failed: {e}")
+                # Use basic response
                 response = {
                     'question': question,
                     'answer': result['answer'],
@@ -125,6 +135,7 @@ def query():
                     'fallback': True
                 }
         else:
+            # Use basic response without Gemini (Gemini disabled)
             response = {
                 'question': question,
                 'answer': result['answer'],
@@ -133,13 +144,22 @@ def query():
                 'num_results': result.get('search_results_count', 0),
                 'ai_enhanced': False
             }
+            print("✅ Using basic Q&A response (Gemini disabled)")
+        
         return jsonify(response), 200
+        
     except Exception as e:
         import traceback
-        return jsonify({'error': str(e), 'details': traceback.format_exc()}), 500
+        print(f"❌ Error in query endpoint: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'error': str(e),
+            'details': traceback.format_exc()
+        }), 500
 
 @app.route('/stats', methods=['GET'])
 def stats():
+    """Get system statistics"""
     try:
         qa = init_qa_system()
         return jsonify({
@@ -152,7 +172,21 @@ def stats():
             }
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
+    print("\n" + "=" * 80)
+    print("Starting Q&A API Server...")
+    print("=" * 80)
+    print("\n📡 API Endpoints:")
+    print("  - GET  /          : API information")
+    print("  - GET  /health     : Health check")
+    print("  - GET  /stats      : System statistics")
+    print("  - POST /query      : Query the Q&A system")
+    print(f"\n🤖 Gemini AI: {'Available' if GEMINI_AVAILABLE else 'Not available'}")
+    print("\n🚀 Server will start on: http://localhost:5000")
+    print("=" * 80 + "\n")
+    
     app.run(debug=True, host='0.0.0.0', port=5000)
